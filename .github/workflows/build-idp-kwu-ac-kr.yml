@@ -86,7 +86,7 @@ jobs:
         echo "IDP_SCOPE_DOMAIN: kwu.ac.kr"
         echo "IDP_HOST_NAME: idp.kwu.ac.kr"
         echo "IDP_ENTITYID: https://idp.kwu.ac.kr/idp/shibboleth"
-        echo "IDP_ORG_DISPLAYNAME: Kwangwoon University"
+        echo "IDP_ORG_DISPLAYNAME: 광주여대"
         echo "IDP_ORG_HOMEPAGE: https://www.kw.ac.kr"
         echo "========================="
     
@@ -122,7 +122,7 @@ jobs:
         echo "  --build-arg \"IDP_SCOPE_DOMAIN=kwu.ac.kr\" \\"
         echo "  --build-arg \"IDP_HOST_NAME=idp.kwu.ac.kr\" \\"
         echo "  --build-arg \"IDP_ENTITYID=https://idp.kwu.ac.kr/idp/shibboleth\" \\"
-        echo "  --build-arg \"IDP_ORG_DISPLAYNAME=Kwangwoon University\" \\"
+        echo "  --build-arg \"IDP_ORG_DISPLAYNAME=광주여대\" \\"
         echo "  --build-arg \"IDP_ORG_HOMEPAGE=https://www.kw.ac.kr\" \\"
         echo "  -t \"$IMAGE_TAG_TIMESTAMP\" \\"
         echo "  -t \"$IMAGE_TAG_LATEST\" ."
@@ -136,7 +136,7 @@ jobs:
           --build-arg "IDP_SCOPE_DOMAIN=kwu.ac.kr" \
           --build-arg "IDP_HOST_NAME=idp.kwu.ac.kr" \
           --build-arg "IDP_ENTITYID=https://idp.kwu.ac.kr/idp/shibboleth" \
-          --build-arg "IDP_ORG_DISPLAYNAME=Kwangwoon University" \
+          --build-arg "IDP_ORG_DISPLAYNAME=광주여대" \
           --build-arg "IDP_ORG_HOMEPAGE=https://www.kw.ac.kr" \
           -t "$IMAGE_TAG_TIMESTAMP" \
           -t "$IMAGE_TAG_LATEST" .
