@@ -1,4 +1,4 @@
-name: Build and Push IdP KWU AC KR
+name: Build and Push IdP NAMBU AC KR
 
 on:
   push:
