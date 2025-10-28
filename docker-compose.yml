@@ -1,0 +1,244 @@
+version: "3.1"
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/ssl/certs:ro
+
+    depends_on:
+      - idp
+    networks:
+      - idpapp
+    restart: unless-stopped
+
+  postgres:
+    restart: unless-stopped
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=shibboleth
+      - POSTGRES_USER=shibboleth
+      - POSTGRES_PASSWORD=changeme
+      - TZ=Asia/Seoul
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-consent.sql:/docker-entrypoint-initdb.d/init-consent.sql
+    networks:
+      idpapp:
+        aliases:
+          - postgres
+    ports:
+      - "5432:5432"
+                    
+    networks:
+      idpapp:
+        aliases:
+          - postgres
+
+  rest:
+    container_name: iugj_rest
+    image: docker.iugj.ac.kr/rest-oracle:latest
+    environment:
+    - ASPNETCORE_ENVIRONMENT=Development
+    - TZ=Asia/Seoul
+    - LANG=ko_KR.UTF-8
+    - DB_USER=nambuOS
+    # - PASSWORD=/run/secrets/PASSWORD for HA config
+    - DB_PASSWORD
+    - SERVICE=nambudb
+    - HOST=210.125.130.8
+    - DB_PORT=1521
+    - DB_TYPE=oracle
+    - AUTH_QUERY=SELECT * FROM nambuOS.BV_nambuDB WHERE ID = :USERID AND PASSWORD=CDDB.SHA256HASH(:PASSWORD)
+    - ATTRIBUTE_QUERY=SELECT NAME AS "displayName",SABUN AS "employeeNumber",  SABUN AS "uid", '광주여자대학교' AS "organizationName", DECODE(GUBUN,'11','student','1','faculty', '2','faculty') AS "eduPersonAffiliation", GWA_NM AS "departmentNumber", SABUN AS "eduPersonPrincipalName" FROM nambuOS.BV_nambuDB WHERE ID = :USERID
+    # secrets:
+      # DB_PASSWORD
+    ports:
+    - 4000:4000 
+    networks:
+      idpapp:
+
+  idp:
+    build:
+      context: .
+      args:
+        - JAVA_VERSION=amazoncorretto:21
+        - JETTY_BASE_VERSION=12.0
+        - IDP_SCOPE=nambu.ac.kr
+        - IDP_SCOPE_DOMAIN=nambu.ac.kr
+        - IDP_HOST_NAME=idp.nambu.ac.kr
+        - IDP_ENTITYID=https://idp.nambu.ac.kr/idp/shibboleth
+        - IDP_ORG_DISPLAYNAME=남부대
+        - IDP_ORG_HOMEPAGE=https://www.kw.ac.kr
+    image: ghcr.io/gjriseon/idp-nambu-ac-kr:latest
+
+    environment:
+     - TZ=Asia/Seoul
+     - LANG=ko_KR.UTF-8
+    depends_on:
+    - rest
+    - postgres
+
+    # Share log volume with Promtail for audit trail collection
+    volumes:
+      - shibboleth_logs:/opt/shibboleth-idp/logs
+      - ./idp-browser.p12:/opt/shibboleth-idp/credentials/idp-browser.p12:ro
+
+    networks:
+      idpapp:
+
+    # secrets: #for HA
+    # - DB_PASSWORD
+    # - REALM
+    # volumes:
+      # - ./logs:/opt/shib-jetty-base/logs
+    # deploy:
+    #     mode: replicated
+    #     replicas: 2
+    #     
+  blackbox_exporter:
+    image: prom/blackbox-exporter
+    container_name: monitoring_blackbox_exporter
+    dns: 8.8.8.8
+    restart: always
+    expose:
+      - 9115
+    volumes:
+      - "./data/blackbox-exporter/config:/config"
+    command: --config.file=/config/blackbox.yml    
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: monitoring_node_exporter
+    restart: unless-stopped
+    expose:
+      - 9100
+    ports:
+      - 9100:9100
+
+  cadvisor:
+    privileged: true
+    image: google/cadvisor:latest
+    container_name: monitoring_cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    expose:
+      - 8080
+    ports:
+      - 8080:8080
+
+  docker_state_exporter:
+    image: karugaru/docker_state_exporter
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    ports:
+      - "9323:8080"
+
+  alertmanager_telegram:
+    image: janwh/alertmanager-telegram
+#    build:
+#     context: ./alertmanager-telegram
+    container_name: monitoring_alertmanager-telegram
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_CHAT_ID=-640180967
+      - TELEGRAM_TOKEN=5197115862:AAFfRyRW0ROpQXHWnIQrvybO3zWy4yhXocQ
+    expose:
+      - 8080
+    volumes:
+      - ./data/alertmanager-telegram/config/template.html:/templates/default.html
+
+  prometheus:
+    image: prom/prometheus:latest
+    user: 1000:1000
+    container_name: monitoring_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./data/prometheus/config:/etc/prometheus/
+      - ./data/prometheus/data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    expose:
+      - 9090
+    ports:
+      - 9090:9090
+    links:
+      - alertmanager:alertmanager
+    depends_on:
+    - alertmanager
+
+  alertmanager:
+    image: quay.io/prometheus/alertmanager
+    container_name: monitoring_alertmanager
+    ports:
+      - 9093:9093
+    volumes:
+      - ./data/alertmanager/config:/etc/alertmanager/
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    links:
+            #      - prometheus_telegram_bot:prometheus_telegram_bot
+      - alertmanager_telegram:alertmanager_telegram
+    depends_on:
+    - alertmanager_telegram
+
+  # Loki for long-term log storage and authentication audit trail
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: monitoring_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./data/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - idpapp
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Promtail for collecting Shibboleth IdP logs
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: monitoring_promtail
+    restart: unless-stopped
+    volumes:
+      - ./data/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - shibboleth_logs:/var/log/shibboleth:ro
+      - promtail_data:/tmp
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+      - idp
+    networks:
+      - idpapp
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9080/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      
+volumes:
+   postgres_data:
+   loki_data:
+   promtail_data:
+   shibboleth_logs:
+
+networks:
+   idpapp:
+
